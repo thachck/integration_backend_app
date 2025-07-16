@@ -6,34 +6,57 @@ on:
     branches: [ main ]
 
 jobs:
-  scan_ruby:
+  test:
     runs-on: ubuntu-latest
-
+    services:
+      postgres:
+        image: postgres:17.5
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: integration_backend_app_test
+        ports: [ "5432:5432" ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      - name: Checkout frontend repo
+        uses: actions/checkout@v4
+        with:
+          repository: thachck/integration_frontend_app
+          path: frontend
+          token: ${{ secrets.GH_PAT }}
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: .ruby-version
           bundler-cache: true
-
-      - name: Scan for common Rails security vulnerabilities using static analysis
-        run: bin/brakeman --no-pager
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          ruby-version: .ruby-version
-          bundler-cache: true
-
-      - name: Lint code for consistent style
-        run: bin/rubocop -f github
-
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: ./frontend/yarn.lock
+      - name: Start frontend server
+        env:
+          VITE_API_BASE_URL: http://localhost:4000
+        working-directory: ./frontend
+        run: |
+          yarn install
+          yarn run dev &
+      - name: Install Chrome and Chromedriver
+        uses: nanasess/setup-chromedriver@v2
+      - name: Start chromedriver
+        run: |
+          export DISPLAY=:99
+          chromedriver --url-base=/wd/hub &
+          sudo Xvfb -ac :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+      - name: Copy configuration files
+        run: |
+          mv config/database.yml.ci config/database.yml
+      - name: Setup test database
+        env:
+          RAILS_ENV: test
+        run: |
+          bin/rails db:setup
+      - name: Run test
+        run: bin/rspec
